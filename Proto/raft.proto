@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package raft;
+
+// The Raft service containing RPCs for AppendEntries, RequestVote, and InstallSnapshot
+service RaftProtocol {
+    // RPC for the AppendEntries call (log replication/heartbeat)
+    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+
+    // RPC for the RequestVote call (election process)
+    rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+
+}
+
+// Message representing the request for AppendEntries RPC
+message AppendEntriesRequest {
+    int32 term = 1; // Leader’s term
+    string leaderId = 2; // Leader’s ID to identify the sender
+    int32 prevLogIndex = 3; // Index of the log entry immediately preceding the new ones
+    int32 prevLogTerm = 4; // Term of the prevLogIndex entry
+    repeated LogEntry entries = 5; // Log entries to store (empty for heartbeat)
+    int32 leaderCommit = 6; // Leader’s commit index
+}
+
+// Message representing the response for AppendEntries RPC
+message AppendEntriesResponse {
+    int32 term = 1; // Current term, for the leader to update itself
+    bool success = 2; // True if follower contained entry matching prevLogIndex and prevLogTerm
+}
+
+// Message representing the request for RequestVote RPC
+message RequestVoteRequest {
+    int32 term = 1; // Candidate’s term
+    string candidateId = 2; // Candidate’s ID
+    int32 lastLogIndex = 3; // Index of candidate’s last log entry
+    int32 lastLogTerm = 4; // Term of candidate’s last log entry
+}
+
+// Message representing the response for RequestVote RPC
+message RequestVoteResponse {
+    int32 term = 1; // Current term, for the candidate to update itself
+    bool voteGranted = 2; // True if candidate received vote
+}
+
+// Message representing a log entry in the Raft log
+message LogEntry {
+    int32 term = 1; // Term when entry was received by leader
+    string command = 2; // Command for state machine
+}

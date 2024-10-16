@@ -16,8 +16,8 @@ namespace RaftProtocolServer
         private int _currentTerm = 0;
         private string? _votedFor = null;
         private readonly List<LogEntry> _log = []; // The follower's log
-        private int _commitIndex = 0;
-        private int _lastApplied = 0;
+        private int _commitIndex = -1;
+        private int _lastApplied = -1;
         private readonly string _id;
 
         private bool _electionInProgress = false;     // Indicates if an election is in progress
@@ -195,7 +195,7 @@ namespace RaftProtocolServer
                         {
                             Console.WriteLine($"{_id.Split(":")[2]}: Sending heartbeat to {node}.");
                             // You may want to send an empty AppendEntries RPC for heartbeat
-                            SendAppendEntriesAsync(node);
+                            _ = SendAppendEntriesAsync(node);
                         }
                         else
                         {
@@ -207,12 +207,9 @@ namespace RaftProtocolServer
             });
         }
 
-        // Method to update commitIndex based on followers' matchIndex
         private void UpdateCommitIndex()
         {
-            // Get the total number of servers (including the leader)
             int totalServers = _matchIndex.Count;
-            Console.WriteLine($"totalServers: {totalServers}, _commitIndex: {_commitIndex}, _log.Count: {_log.Count}");
 
             // Iterate over possible log indices (starting from current commitIndex + 1)
             for (int N = _commitIndex + 1; N < _log.Count; N++)

@@ -1,8 +1,5 @@
 ﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
-using Server;
-using Greet;
-using Grpc.Net.Client;
 using RaftProtocolServer;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -18,12 +15,12 @@ for (int i = 0; i < urls.Length; i++)
     var builder = WebApplication.CreateBuilder(args);
 
     builder.Logging.ClearProviders();
-    builder.Logging.AddSerilog();
+    // builder.Logging.AddSerilog();
 
     builder.Services.AddGrpc();
     builder.Services.AddSingleton<RaftService>();
 
-    builder.Services.AddSingleton<string>(url);
+    builder.Services.AddSingleton(url);
     builder.Services.AddSingleton<List<string>>([.. urls]);
 
     var app = builder.Build();
@@ -43,29 +40,3 @@ for (int i = 0; i < urls.Length; i++)
 }
 
 await Task.WhenAll(tasks);
-
-
-// Greeter Code!
-// var builder = WebApplication.CreateBuilder(args);
-// builder.Services.AddGrpc();
-
-
-// var app = builder.Build();
-// app.MapGrpcService<GreeterService>();
-
-// Task t = Task.Run(() => { app.Run(); });
-
-
-// Console.WriteLine("Press any key to continue...");
-// Console.ReadKey();
-// using var channel = GrpcChannel.ForAddress("https://localhost:5001");
-// var client = new Greeter.GreeterClient(channel);
-
-// var reply = await client.SayHelloAsync(new HelloRequest { Name = "GreeterClient" });
-// Console.WriteLine("Greeting: " + reply.Message);
-
-// Console.WriteLine("Shutting down");
-// Console.WriteLine("Press any key to exit...");
-// Console.ReadKey();
-
-

@@ -16,8 +16,8 @@
     </PackageReference>
     <PackageReference Include="Serilog.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
-    <Protobuf Include="..\Proto\greet.proto" />
-    <Protobuf Include="..\Proto\raft.proto" />
+    <Protobuf Include="Proto\greet.proto" />
+    <Protobuf Include="Proto\raft.proto" />
   
     <PackageReference Include="grpc.aspnetcore" Version="2.66.0" />
   </ItemGroup>

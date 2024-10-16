@@ -2,7 +2,7 @@ using Grpc.Core;
 using Raft;
 using Grpc.Net.Client;
 
-namespace RaftProtocolServer
+namespace Services
 {
     enum NodeState
     {
@@ -15,22 +15,22 @@ namespace RaftProtocolServer
         private NodeState _state = NodeState.Follower;
         private int _currentTerm = 0;
         private string? _votedFor = null;
-        private readonly List<LogEntry> _log = []; // The follower's log
+        private readonly List<LogEntry> _log = [];
         private int _commitIndex = -1;
         private int _lastApplied = -1;
         private readonly string _id;
 
-        private bool _electionInProgress = false;     // Indicates if an election is in progress
+        private bool _electionInProgress = false;
         private readonly Random _random = new();
         private CancellationTokenSource _cancellationTokenSource;
 
-        private const int MinElectionTimeout = 1500;   // Minimum timeout in milliseconds
-        private const int MaxElectionTimeout = 3000;   // Maximum timeout in milliseconds
-        private readonly List<string> _otherNodes;              // List of other nodes in the cluster
-        private const int HeartbeatInterval = 1000;    // Heartbeat interval in milliseconds
+        private const int MinElectionTimeout = 1500;
+        private const int MaxElectionTimeout = 3000;
+        private readonly List<string> _otherNodes;
+        private const int HeartbeatInterval = 1000;
 
-        private readonly Dictionary<string, int> _nextIndex = new();   // Tracks next index for each follower
-        private readonly Dictionary<string, int> _matchIndex = new();  // Tracks match index for each follower
+        private readonly Dictionary<string, int> _nextIndex = new();
+        private readonly Dictionary<string, int> _matchIndex = new();
 
         public RaftService(List<string> otherNodes, string address)
         {

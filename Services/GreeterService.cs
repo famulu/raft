@@ -4,7 +4,7 @@ using Greet;
 using Grpc.Core;
 using Microsoft.Extensions.Logging;
 
-namespace Server
+namespace Services
 {
     public class GreeterService : Greeter.GreeterBase
     {

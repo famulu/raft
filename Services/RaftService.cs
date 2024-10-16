@@ -10,14 +10,84 @@ namespace Services
         Candidate,
         Leader
     }
+
+    class Log<T>
+    {
+        private readonly List<T> _internalList = [];
+
+        public T this[int index]
+        {
+            get
+            {
+                if (index < 1 || index > Count)
+                    throw new ArgumentOutOfRangeException(nameof(index), "Index must be between 1 and Count.");
+                return _internalList[index - 1]; // Adjust for 0-based indexing
+            }
+            set
+            {
+                if (index < 1 || index > Count)
+                    throw new ArgumentOutOfRangeException(nameof(index), "Index must be between 1 and Count.");
+                _internalList[index - 1] = value; // Adjust for 0-based indexing
+            }
+        }
+
+        public List<T> BackingList => _internalList;
+
+        public int Count => _internalList.Count;
+
+        public void Add(T item)
+        {
+            _internalList.Add(item);
+        }
+
+        public void Clear()
+        {
+            _internalList.Clear();
+        }
+
+        public bool Contains(T item)
+        {
+            return _internalList.Contains(item);
+        }
+
+        public int IndexOf(T item)
+        {
+            int index = _internalList.IndexOf(item);
+            return index >= 0 ? index + 1 : -1; // Convert to 1-based index
+        }
+
+        public void Insert(int index, T item)
+        {
+            if (index < 1 || index > Count + 1)
+                throw new ArgumentOutOfRangeException(nameof(index), "Index must be between 1 and Count + 1.");
+            _internalList.Insert(index - 1, item); // Adjust for 0-based indexing
+        }
+
+        public bool Remove(T item)
+        {
+            return _internalList.Remove(item);
+        }
+
+        public void RemoveAt(int index)
+        {
+            if (index < 1 || index > Count) throw new ArgumentOutOfRangeException(nameof(index), "Index must be between 1 and Count.");
+            _internalList.RemoveAt(index - 1); // Adjust for 0-based indexing
+        }
+
+        public void RemoveRange(int index, int count)
+        {
+            _internalList.RemoveRange(index - 1, count);
+        }
+    }
+
     public class RaftService : RaftProtocol.RaftProtocolBase
     {
         private NodeState _state = NodeState.Follower;
         private int _currentTerm = 0;
         private string? _votedFor = null;
-        private readonly List<LogEntry> _log = [];
-        private int _commitIndex = -1;
-        private int _lastApplied = -1;
+        private readonly Log<LogEntry> _log = new();
+        private int _commitIndex = 0;
+        private int _lastApplied = 0;
         private readonly string _id;
 
         private bool _electionInProgress = false;
@@ -77,13 +147,18 @@ namespace Services
             // Check if the node has an entry in the nextIndex dictionary, initialize if not
             if (!_nextIndex.TryGetValue(nodeAddress, out int value))
             {
-                value = _log.Count;
+                value = _log.Count + 1;
                 _nextIndex[nodeAddress] = value;  // Start with the last log index + 1 (no new entries yet)
             }
-
             // Create the AppendEntries request based on nextIndex
             var prevLogIndex = value - 1;  // The log index before the next entry we want to send
-            var prevLogTerm = prevLogIndex >= 0 ? _log[prevLogIndex].Term : 0;
+            var prevLogTerm = prevLogIndex >= 1 ? _log[prevLogIndex].Term : 0;
+
+            var entries = new List<LogEntry>();
+            for (int i = value; i <= _log.Count; i++)
+            {
+                entries.Add(_log[i]);
+            }
 
             var request = new AppendEntriesRequest
             {
@@ -91,7 +166,7 @@ namespace Services
                 LeaderId = _id,
                 PrevLogIndex = prevLogIndex,
                 PrevLogTerm = prevLogTerm,
-                Entries = { _log.Skip(value).Select(logEntry => new LogEntry { Term = logEntry.Term, Command = logEntry.Command }) },
+                Entries = { entries },
                 LeaderCommit = _commitIndex
             };
 
@@ -103,14 +178,14 @@ namespace Services
                 {
                     Console.WriteLine($"{_id.Split(":")[2]}: AppendEntry to {nodeAddress} = Success!");
                     // If AppendEntries was successful, update nextIndex and matchIndex
-                    _nextIndex[nodeAddress] = _log.Count;          // Set nextIndex to the last log index + 1
-                    _matchIndex[nodeAddress] = _log.Count - 1;     // Set matchIndex to the last log entry
+                    _nextIndex[nodeAddress] = _log.Count + 1;          // Set nextIndex to the last log index + 1
+                    _matchIndex[nodeAddress] = _log.Count;     // Set matchIndex to the last log entry
                 }
                 else
                 {
                     Console.WriteLine($"{_id.Split(":")[2]}: AppendEntry to {nodeAddress} = Failure!");
                     // If AppendEntries failed (e.g., logs do not match), decrement nextIndex and try again later
-                    _nextIndex[nodeAddress] = Math.Max(0, _nextIndex[nodeAddress] - 1);
+                    _nextIndex[nodeAddress] = Math.Max(1, _nextIndex[nodeAddress] - 1);
                 }
             }
             catch (RpcException ex)
@@ -135,7 +210,7 @@ namespace Services
                 Term = _currentTerm,        // The leader's current term
                 LeaderId = _id,             // The leader's unique ID (address)
                 PrevLogIndex = _nextIndex[nodeAddress] - 1, // The index of the last log entry
-                PrevLogTerm = _nextIndex[nodeAddress] - 1 >= 0 && _nextIndex[nodeAddress] - 1 < _log.Count ? _log[_nextIndex[nodeAddress] - 1].Term : 0,   // The term of the last log entry
+                PrevLogTerm = _nextIndex[nodeAddress] - 1 >= 1 && _nextIndex[nodeAddress] - 1 <= _log.Count ? _log[_nextIndex[nodeAddress] - 1].Term : 0,   // The term of the last log entry
                 LeaderCommit = _commitIndex, // The leader's commit index
                 Entries = { }
             };
@@ -161,8 +236,8 @@ namespace Services
                     }
                     else
                     {
-                        Console.WriteLine($"Heartbeat to {nodeAddress} failed. {response.Term} {response.Success}");
-                        _nextIndex[nodeAddress]--;
+                        Console.WriteLine($"Heartbeat to {nodeAddress} failed.");
+                        _nextIndex[nodeAddress] = Math.Max(1, _nextIndex[nodeAddress] - 1);
                     }
                 }
             }
@@ -188,7 +263,7 @@ namespace Services
 
                     UpdateCommitIndex();
 
-                    Console.WriteLine($"{_id.Split(":")[2]}: Leader Log: [{string.Join(",", _log)}]");
+                    Console.WriteLine($"{_id.Split(":")[2]}: Leader Log: [{string.Join(",", _log.BackingList)}]");
                     foreach (var node in _otherNodes)
                     {
                         if (node != _id)
@@ -199,8 +274,8 @@ namespace Services
                         }
                         else
                         {
-                            _nextIndex[node] = _log.Count;          // Set nextIndex to the last log index + 1
-                            _matchIndex[node] = _log.Count - 1;
+                            _nextIndex[node] = _log.Count + 1;          // Set nextIndex to the last log index + 1
+                            _matchIndex[node] = _log.Count;
                         }
                     }
                 }
@@ -212,7 +287,7 @@ namespace Services
             int totalServers = _matchIndex.Count;
 
             // Iterate over possible log indices (starting from current commitIndex + 1)
-            for (int N = _commitIndex + 1; N < _log.Count; N++)
+            for (int N = _commitIndex + 1; N < _log.Count + 1; N++)
             {
                 // Count how many servers have replicated the log entry at index N
                 int matchCount = 1; // Start with 1 for the leader (itself)
@@ -261,13 +336,18 @@ namespace Services
             {
                 Term = _currentTerm,
                 CandidateId = _id, // Replace with actual ID
-                LastLogIndex = _log.Count - 1,
-                LastLogTerm = _log.Count > 0 ? _log.Last().Term : 0
+                LastLogIndex = _log.Count,
+                LastLogTerm = _log.Count > 0 ? _log[_log.Count].Term : 0
             };
 
             try
             {
-                return await client.RequestVoteAsync(request);
+                var t = await client.RequestVoteAsync(request);
+                if (t.VoteGranted)
+                {
+                    Console.WriteLine($"{_id.Split(":")[2]}: Vote received from " + nodeAddress);
+                }
+                return t;
             }
             catch (RpcException ex)
             {
@@ -289,7 +369,7 @@ namespace Services
             _votedFor = _id; // Vote for ourselves
 
             int votesReceived = 1; // Count self-vote
-            List<Task<RequestVoteResponse>> voteTasks = new List<Task<RequestVoteResponse>>();
+            List<Task<RequestVoteResponse>> voteTasks = [];
 
             // Send RequestVote RPC to other nodes
             foreach (var node in _otherNodes)
@@ -340,7 +420,7 @@ namespace Services
             foreach (var node in _otherNodes)
             {
                 // Initialize nextIndex to the index after the last log entry
-                _nextIndex[node] = _log.Count;
+                _nextIndex[node] = _log.Count + 1;
 
                 // Initialize matchIndex to 0 (no log entries are replicated yet)
                 _matchIndex[node] = 0;
@@ -365,7 +445,7 @@ namespace Services
         public override Task<AppendEntriesResponse> AppendEntries(AppendEntriesRequest request, ServerCallContext context)
         {
             Console.WriteLine($"{_id.Split(":")[2]}: Received AppendEntries from {request.LeaderId}\n{{ Term: {request.Term}, PrevLogIndex: {request.PrevLogIndex}, PrevLogTerm: {request.PrevLogTerm}, LeaderId: {request.LeaderId}, LeaderCommit: {request.LeaderCommit}, Entries: {request.Entries} }}");
-            Console.WriteLine($"{_id.Split(":")[2]}: Log: [ {string.Join(",", _log)} ]");
+            Console.WriteLine($"{_id.Split(":")[2]}: Log: [ {string.Join(",", _log.BackingList)} ]");
             BecomeFollower();
 
             // If the term of the leader is less than the current term, reject the request
@@ -382,11 +462,11 @@ namespace Services
                 _votedFor = null;
             }
 
-            if (request.PrevLogIndex >= 0)
+            if (request.PrevLogIndex >= 1)
             {
-                if (_log.Count <= request.PrevLogIndex || _log[request.PrevLogIndex].Term != request.PrevLogTerm)
+                if (_log.Count < request.PrevLogIndex || _log[request.PrevLogIndex].Term != request.PrevLogTerm)
                 {
-                    Console.WriteLine($"{_id.Split(":")[2]}: log doesn't contain an entry at prevLogIndex with prevLogTerm");
+                    Console.WriteLine($"{_id.Split(":")[2]}: AppendEntries failed. Log doesn't contain an entry at prevLogIndex with prevLogTerm");
                     return Task.FromResult(new AppendEntriesResponse { Term = _currentTerm, Success = false });
                 }
             }
@@ -395,17 +475,17 @@ namespace Services
             int index = request.PrevLogIndex + 1;
             for (int i = 0; i < request.Entries.Count; i++, index++)
             {
-                if (_log.Count > index)
+                if (_log.Count >= index)
                 {
                     // If an existing entry conflicts with a new one, delete the existing entry and all that follow it
-                    if (_log[index].Term != request.Entries[i].Term)
+                    if (_log[index + 1].Term != request.Entries[i].Term)
                     {
-                        _log.RemoveRange(index, _log.Count - index);
+                        _log.RemoveRange(index + 1, _log.Count - index);
                     }
                 }
 
                 // Append any new entries not in the log
-                if (_log.Count <= index)
+                if (_log.Count < index)
                 {
                     _log.Add(request.Entries[i]);
                 }
@@ -414,13 +494,13 @@ namespace Services
             // If leaderCommit > commitIndex, set commitIndex to min(leaderCommit, index of last new entry)
             if (request.LeaderCommit > _commitIndex)
             {
-                _commitIndex = Math.Min(request.LeaderCommit, _log.Count - 1);
+                _commitIndex = Math.Min(request.LeaderCommit, _log.Count);
             }
 
             // Apply committed log entries
             ApplyLogEntries();
 
-            Console.WriteLine($"{_id.Split(":")[2]}: Current Log [{string.Join(";", _log)}]");
+            Console.WriteLine($"{_id.Split(":")[2]}: Current Log [{string.Join(";", _log.BackingList)}]");
 
             return Task.FromResult(new AppendEntriesResponse { Term = _currentTerm, Success = true });
         }
@@ -472,7 +552,7 @@ namespace Services
                     _votedFor = request.CandidateId;
                     response.VoteGranted = true;
 
-                    // BecomeFollower();
+                    BecomeFollower();
                 }
             }
 
@@ -487,9 +567,9 @@ namespace Services
             if (_log.Count == 0) return true;
 
             // Get the last log entry term and index from the follower's log
-            var lastLogEntry = _log[_log.Count - 1];
+            var lastLogEntry = _log[_log.Count];
             int lastTerm = lastLogEntry.Term;
-            int lastIndex = _log.Count - 1;
+            int lastIndex = _log.Count;
 
             // Compare the candidate's last log term and index with ours
             // The candidate's log is considered more up-to-date if:

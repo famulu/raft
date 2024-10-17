@@ -93,21 +93,26 @@ namespace Services
         private bool _electionInProgress = false;
         private readonly Random _random = new();
         private CancellationTokenSource _cancellationTokenSource;
+        private CancellationTokenSource _electionCanceller;
 
-        private const int MinElectionTimeout = 1500;
-        private const int MaxElectionTimeout = 3000;
+        private const int MinElectionTimeout = 150;
+        private const int MaxElectionTimeout = 300;
         private readonly List<string> _otherNodes;
-        private const int HeartbeatInterval = 1000;
+        private const int HeartbeatInterval = 100;
 
         private readonly Dictionary<string, int> _nextIndex = new();
         private readonly Dictionary<string, int> _matchIndex = new();
 
+        public static string ID;
+
         public RaftService(List<string> otherNodes, string address)
         {
             _cancellationTokenSource = new CancellationTokenSource();
+            _electionCanceller = new CancellationTokenSource();
             StartElectionTimer(_cancellationTokenSource.Token);
             _otherNodes = otherNodes;
             _id = address;
+            RaftService.ID = address;
         }
 
         private void StartElectionTimer(CancellationToken cancellationToken)
@@ -117,16 +122,17 @@ namespace Services
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     int electionTimeout = _random.Next(MinElectionTimeout, MaxElectionTimeout);
-                    Console.WriteLine($"{_id.Split(":")[2]}: Election timer set to {electionTimeout} ms");
+                    Logger.Log($"{_id.Split(":")[2]}: Election timer set to {electionTimeout} ms");
 
                     try
                     {
                         await Task.Delay(electionTimeout, cancellationToken);
-
+                        _electionCanceller.Cancel();
                         // If no heartbeat is received, start an election
-                        if (_state != NodeState.Leader && !_electionInProgress)
+                        if (_state != NodeState.Leader)
                         {
-                            await StartElection();
+                            _electionCanceller = new CancellationTokenSource();
+                            _ = StartElection();
                         }
                     }
                     catch (TaskCanceledException)
@@ -176,21 +182,21 @@ namespace Services
 
                 if (response.Success)
                 {
-                    Console.WriteLine($"{_id.Split(":")[2]}: AppendEntry to {nodeAddress} = Success!");
+                    Logger.Log($"{_id.Split(":")[2]}: AppendEntry to {nodeAddress} = Success!");
                     // If AppendEntries was successful, update nextIndex and matchIndex
                     _nextIndex[nodeAddress] = _log.Count + 1;          // Set nextIndex to the last log index + 1
                     _matchIndex[nodeAddress] = _log.Count;     // Set matchIndex to the last log entry
                 }
                 else
                 {
-                    Console.WriteLine($"{_id.Split(":")[2]}: AppendEntry to {nodeAddress} = Failure!");
+                    Logger.Log($"{_id.Split(":")[2]}: AppendEntry to {nodeAddress} = Failure!");
                     // If AppendEntries failed (e.g., logs do not match), decrement nextIndex and try again later
                     _nextIndex[nodeAddress] = Math.Max(1, _nextIndex[nodeAddress] - 1);
                 }
             }
             catch (RpcException ex)
             {
-                Console.WriteLine($"Failed to send AppendEntries to {nodeAddress}: {ex.Status}");
+                Logger.Log($"Failed to send AppendEntries to {nodeAddress}: {ex.Status}");
             }
             finally
             {
@@ -223,20 +229,20 @@ namespace Services
                 // Check the response and handle accordingly
                 if (response.Success)
                 {
-                    Console.WriteLine($"Heartbeat to {nodeAddress} succeeded.");
+                    Logger.Log($"Heartbeat to {nodeAddress} succeeded.");
                 }
                 else
                 {
                     // If the follower's term is higher, we need to step down
                     if (response.Term > _currentTerm)
                     {
-                        Console.WriteLine($"{_id.Split(":")[2]}: Follower {nodeAddress} has a higher term. Stepping down as leader.");
+                        Logger.Log($"{_id.Split(":")[2]}: Follower {nodeAddress} has a higher term. Stepping down as leader.");
                         _currentTerm = response.Term;
                         BecomeFollower();
                     }
                     else
                     {
-                        Console.WriteLine($"Heartbeat to {nodeAddress} failed.");
+                        Logger.Log($"Heartbeat to {nodeAddress} failed.");
                         _nextIndex[nodeAddress] = Math.Max(1, _nextIndex[nodeAddress] - 1);
                     }
                 }
@@ -244,7 +250,7 @@ namespace Services
             catch (RpcException ex)
             {
                 // Log the error in case the RPC fails (follower might be down or unreachable)
-                Console.WriteLine($"Failed to send heartbeat to {nodeAddress}: {ex.Status}");
+                Logger.Log($"Failed to send heartbeat to {nodeAddress}: {ex.Status}");
             }
             finally
             {
@@ -263,12 +269,12 @@ namespace Services
 
                     UpdateCommitIndex();
 
-                    Console.WriteLine($"{_id.Split(":")[2]}: Leader Log: [{string.Join(",", _log.BackingList)}]");
+                    Logger.Log($"{_id.Split(":")[2]}: Leader Log: [{string.Join(",", _log.BackingList)}]");
                     foreach (var node in _otherNodes)
                     {
                         if (node != _id)
                         {
-                            Console.WriteLine($"{_id.Split(":")[2]}: Sending heartbeat to {node}.");
+                            Logger.Log($"{_id.Split(":")[2]}: Sending heartbeat to {node}.");
                             // You may want to send an empty AppendEntries RPC for heartbeat
                             _ = SendAppendEntriesAsync(node);
                         }
@@ -328,7 +334,7 @@ namespace Services
 
         private async Task<RequestVoteResponse> SendRequestVoteAsync(string nodeAddress)
         {
-            Console.WriteLine($"{_id.Split(":")[2]}: Sending RequestVote to " + nodeAddress);
+            Logger.Log($"{_id.Split(":")[2]}: Sending RequestVote to " + nodeAddress);
             using var channel = GrpcChannel.ForAddress(nodeAddress);
 
             var client = new RaftProtocol.RaftProtocolClient(channel);
@@ -345,13 +351,13 @@ namespace Services
                 var t = await client.RequestVoteAsync(request);
                 if (t.VoteGranted)
                 {
-                    Console.WriteLine($"{_id.Split(":")[2]}: Vote received from " + nodeAddress);
+                    Logger.Log($"{_id.Split(":")[2]}: Vote received from " + nodeAddress);
                 }
                 return t;
             }
             catch (RpcException ex)
             {
-                Console.WriteLine($"Failed to send RequestVote to {nodeAddress}: {ex.Status}");
+                Logger.Log($"Failed to send RequestVote to {nodeAddress}: {ex.Status}");
                 return new RequestVoteResponse { Term = _currentTerm, VoteGranted = false };
             }
             finally
@@ -362,7 +368,7 @@ namespace Services
 
         private async Task StartElection()
         {
-            Console.WriteLine($"{_id.Split(":")[2]}: Election timeout expired. Starting election.");
+            Logger.Log($"{_id.Split(":")[2]}: Election timeout expired. Starting election.");
             _state = NodeState.Candidate;
             _electionInProgress = true;
             _currentTerm++;
@@ -381,18 +387,24 @@ namespace Services
                 }
             }
 
-            // Wait for all votes to be collected
-            var responses = await Task.WhenAll(voteTasks);
-
-            // Count the votes
-            foreach (var response in responses)
+            while (voteTasks.Count > 0)
             {
-                if (response.VoteGranted)
+                if (_electionCanceller.IsCancellationRequested)
                 {
-
-                    votesReceived++;
-                    Console.WriteLine($"{_id.Split(":")[2]}: Current Votes: {votesReceived}");
+                    return;
                 }
+                var completedTask = await Task.WhenAny(voteTasks);
+                if (completedTask.Result.VoteGranted)
+                {
+                    votesReceived++;
+                    Logger.Log($"{_id.Split(":")[2]}: Current Votes: {votesReceived}");
+                    if (votesReceived > _otherNodes.Count / 2)
+                    {
+                        BecomeLeader();
+                        return;
+                    }
+                }
+                voteTasks.Remove(completedTask);
             }
 
             // Determine if we won the election
@@ -402,14 +414,14 @@ namespace Services
             }
             else
             {
-                Console.WriteLine($"{_id.Split(":")[2]}: Did not get required votes");
+                Logger.Log($"{_id.Split(":")[2]}: Did not get required votes");
                 _electionInProgress = false; // Election failed
             }
         }
 
         private void BecomeLeader()
         {
-            Console.WriteLine($"{_id.Split(":")[2]}: Node has become the leader.");
+            Logger.Log($"{_id.Split(":")[2]}: Node has become the leader.");
             _log.Add(new LogEntry { Command = $"{_id.Split(":")[2]} is leader", Term = _currentTerm });
             // 1. Cancel the election timer
             _cancellationTokenSource.Cancel();
@@ -431,7 +443,7 @@ namespace Services
             {
                 if (node != _id)
                 {
-                    Console.WriteLine($"{_id.Split(":")[2]}: Sending initial heartbeat to {node}.");
+                    Logger.Log($"{_id.Split(":")[2]}: Sending initial heartbeat to {node}.");
                     // Send an empty AppendEntries message to establish leadership
                     Task t = SendHeartbeat(node);
 
@@ -444,14 +456,14 @@ namespace Services
 
         public override Task<AppendEntriesResponse> AppendEntries(AppendEntriesRequest request, ServerCallContext context)
         {
-            Console.WriteLine($"{_id.Split(":")[2]}: Received AppendEntries from {request.LeaderId}\n{{ Term: {request.Term}, PrevLogIndex: {request.PrevLogIndex}, PrevLogTerm: {request.PrevLogTerm}, LeaderId: {request.LeaderId}, LeaderCommit: {request.LeaderCommit}, Entries: {request.Entries} }}");
-            Console.WriteLine($"{_id.Split(":")[2]}: Log: [ {string.Join(",", _log.BackingList)} ]");
+            Logger.Log($"{_id.Split(":")[2]}: Received AppendEntries from {request.LeaderId}\n{{ Term: {request.Term}, PrevLogIndex: {request.PrevLogIndex}, PrevLogTerm: {request.PrevLogTerm}, LeaderId: {request.LeaderId}, LeaderCommit: {request.LeaderCommit}, Entries: {request.Entries} }}");
+            Logger.Log($"{_id.Split(":")[2]}: Log: [ {string.Join(",", _log.BackingList)} ]");
             BecomeFollower();
 
             // If the term of the leader is less than the current term, reject the request
             if (request.Term < _currentTerm)
             {
-                Console.WriteLine($"{_id.Split(":")[2]}: Leader term is less than current term");
+                Logger.Log($"{_id.Split(":")[2]}: Leader term is less than current term");
                 return Task.FromResult(new AppendEntriesResponse { Term = _currentTerm, Success = false });
             }
 
@@ -466,7 +478,7 @@ namespace Services
             {
                 if (_log.Count < request.PrevLogIndex || _log[request.PrevLogIndex].Term != request.PrevLogTerm)
                 {
-                    Console.WriteLine($"{_id.Split(":")[2]}: AppendEntries failed. Log doesn't contain an entry at prevLogIndex with prevLogTerm");
+                    Logger.Log($"{_id.Split(":")[2]}: AppendEntries failed. Log doesn't contain an entry at prevLogIndex with prevLogTerm");
                     return Task.FromResult(new AppendEntriesResponse { Term = _currentTerm, Success = false });
                 }
             }
@@ -478,9 +490,9 @@ namespace Services
                 if (_log.Count >= index)
                 {
                     // If an existing entry conflicts with a new one, delete the existing entry and all that follow it
-                    if (_log[index + 1].Term != request.Entries[i].Term)
+                    if (_log[index].Term != request.Entries[i].Term)
                     {
-                        _log.RemoveRange(index + 1, _log.Count - index);
+                        _log.RemoveRange(index, _log.Count - index + 1);
                     }
                 }
 
@@ -500,7 +512,7 @@ namespace Services
             // Apply committed log entries
             ApplyLogEntries();
 
-            Console.WriteLine($"{_id.Split(":")[2]}: Current Log [{string.Join(";", _log.BackingList)}]");
+            Logger.Log($"{_id.Split(":")[2]}: Current Log [{string.Join(";", _log.BackingList)}]");
 
             return Task.FromResult(new AppendEntriesResponse { Term = _currentTerm, Success = true });
         }
@@ -513,13 +525,13 @@ namespace Services
                 _lastApplied++;
                 // Apply _log[_lastApplied] to the state machine
                 // (In a real Raft system, this would involve applying the command to the actual state machine)
-                Console.WriteLine($"Applying log entry at index {_lastApplied}, term {_log[_lastApplied].Term}");
+                Logger.Log($"Applying log entry at index {_lastApplied}, term {_log[_lastApplied].Term}");
             }
         }
 
         public override Task<RequestVoteResponse> RequestVote(RequestVoteRequest request, ServerCallContext context)
         {
-            Console.WriteLine($"{_id.Split(":")[2]}: Received RequestVote from {request.CandidateId.Split(":")[2]}");
+            Logger.Log($"{_id.Split(":")[2]}: Received RequestVote from {request.CandidateId.Split(":")[2]}");
             // Initialize the response
             var response = new RequestVoteResponse
             {
@@ -587,4 +599,20 @@ namespace Services
             return false;
         }
     }
+
+    public class Logger
+    {
+        private static readonly object _lock = new object();
+
+        public static void Log(string message)
+        {
+            lock (_lock) // Ensure thread-safety
+            {
+                using StreamWriter writer = new($"log{RaftService.ID.Split(":")[2]}.txt", true); // true to append to file
+                writer.WriteLine($"{DateTime.Now}: {message}");
+            }
+        }
+    }
 }
+
+

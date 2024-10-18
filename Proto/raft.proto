@@ -10,7 +10,10 @@ service RaftProtocol {
     // RPC for the RequestVote call (election process)
     rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
 
+    
 }
+
+
 
 // Message representing the request for AppendEntries RPC
 message AppendEntriesRequest {
